@@ -31,5 +31,5 @@ def make_video(frame_paths, output_path):
 	video.release()
 
 # make_gif(["broadway_tower.jpg", "output/shrinkage/broadway_tower_0080_shrunk.png"], "output/comparison.gif")
-frames = ["broadway_tower.jpg"] + [f"output/shrinkage/broadway_tower_{str(i).zfill(4)}_shrunk.png" for i in range(500)]
+frames = ["broadway_tower.jpg"] + [f"output/shrinkage/broadway_tower_{str(i).zfill(4)}_shrunk.png" for i in range(793)]
 make_video(frames, "output/comparison.mp4")
