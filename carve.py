@@ -9,7 +9,7 @@ def distance(px1, px2):
 
 
 def index_seams(pixels, width, height, progress=True):
-	"""Return a width*height array of (next_x, next_y, seam_cost)."""
+	"""Return a height*width array of (next_x, next_y, seam_cost)."""
 	seams = [[[0, 0, 0] for _ in range(width)] for __ in range(height)]
 
 	for row in range(height-2, -1, -1):
@@ -24,11 +24,14 @@ def index_seams(pixels, width, height, progress=True):
 				candidates.append((row+1, col-1))
 			if col != width-1:
 				candidates.append((row+1, col+1))
-
-			distances = [distance(this_pixel, c) for c in candidates]
 			
-			idx = distances.index(min(distances)) 
-			seams[row][col] = [candidates[idx][0], candidates[idx][1], distances[idx]]
+			candidate_pixels = [pixels[c[1], c[0]] for c in candidates]
+			distances = [distance(this_pixel, c) for c in candidate_pixels]
+			
+			idx = distances.index(min(distances))
+			selected_candidate = candidates[idx]
+			total_distance = distances[idx] + seams[selected_candidate[0]][selected_candidate[1]][2]
+			seams[row][col] = [selected_candidate[0], selected_candidate[1], total_distance]
 
 	return seams
 
@@ -37,6 +40,14 @@ def get_seam(seams_index):
 	"""Return a list of column indices so that seam[row]=seam_column."""
 	height = len(seams_index)
 	seam_start_column = seams_index[0].index(min(seams_index[0], key=lambda x: x[2]))
+
+	# min_col = 0
+	# for col in seams_index[0]:
+	# 	print(col)
+	# 	if col[2] < seams_index[0][min_col][2]:
+	# 		min_col = col[1]
+	# seam_start_column = min_col
+
 	seam = [seam_start_column]
 	current = (0, seam_start_column)
 	while (current[0] != height-1):
@@ -76,7 +87,7 @@ if __name__ == "__main__":
 
 	image = Image.open(filename).convert("RGB")
 
-	iteration_count = 1
+	iteration_count = 1000
 	for i in range(iteration_count):
 		print("Processing", (i+1), "/", iteration_count)
 
@@ -84,10 +95,10 @@ if __name__ == "__main__":
 		seam = get_seam(index_seams(pixels, *image.size))
 
 		mark_seam(pixels, seam)
-		image.save("shrinkage/" + filename[:-4] + "_" + str(i).zfill(4) + "_seamed.png")
+		image.save("output/shrinkage/" + filename[:-4] + "_" + str(i).zfill(4) + "_seamed.png")
 
 		shrunk = remove_seam(pixels, seam, *image.size)
-		shrunk.save("shrinkage/" + filename[:-4] + "_" + str(i).zfill(4) + "_shrunk.png")
+		shrunk.save("output/shrinkage/" + filename[:-4] + "_" + str(i).zfill(4) + "_shrunk.png")
 
 		image = shrunk
 
