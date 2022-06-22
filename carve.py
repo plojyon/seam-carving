@@ -1,81 +1,110 @@
 import sys
 import math
+import time
+import numpy as np
 from PIL import Image
-
+from multiprocessing import Process, Pool
+sys.setrecursionlimit(1500)  # height of the image must not exceed this
 
 def distance(px1, px2):
 	"""Euclidean distance between two pixels."""
 	return sum([(a-b)**2 for a,b in zip(px1, px2)])
 
 
-def index_seams(pixels, width, height, progress=True):
-	"""Return a height*width array of (next_x, next_y, seam_cost)."""
-	seams = [[[0, 0, 0] for _ in range(width)] for __ in range(height)]
+def get_distances(pixels):
+	"""Return an array of distances to the closest neighbour for each pixel."""
+	height, width, colour_depth = pixels.shape
 
-	for row in range(height-2, -1, -1):
-		if (progress and row % 100 == 0):
-			print(100-((row*100)//height), "%")
-		
-		for col in range(width):
-			this_pixel = pixels[col, row]
+	# we will store 3 copies of the bitmap (one for each horizontal offset)
+	distances = [None, None, None]
 
-			candidates = [(row+1, col)]
-			if col != 0:
-				candidates.append((row+1, col-1))
-			if col != width-1:
-				candidates.append((row+1, col+1))
-			
-			candidate_pixels = [pixels[c[1], c[0]] for c in candidates]
-			distances = [distance(this_pixel, c) for c in candidate_pixels]
-			
-			idx = distances.index(min(distances))
-			selected_candidate = candidates[idx]
-			total_distance = distances[idx] + seams[selected_candidate[0]][selected_candidate[1]][2]
-			seams[row][col] = [selected_candidate[0], selected_candidate[1], total_distance]
+	vertically_offset_pixels = np.roll(pixels, -1, axis=0)
+	for horizontal_offset in (-1, 0, 1):
+		pixels_offset = np.roll(vertically_offset_pixels, horizontal_offset, axis=1)
+		# calculate colour distance -> sum((px1[c] - px2[c])**2 for c in colours)
+		diff = (pixels - pixels_offset)**2
+		colour_distance = np.sum(diff, axis=2)
+		distances[horizontal_offset+1] = colour_distance
 
-	return seams
+	# first column of the right-shifted bitmap shouldn't be used
+	# or the last column of the left-shifted one
+	# since they're just artifacts of np.roll-ing
+	# TODO: is this really neccessary?
+	# infty = 260101  # = 4*(255**2)+1 > max distance between two colours
+	# distances[0][:, -1] = infty  # rolled to the left (delete last column)
+	# distances[2][:, 0] = infty  # rolled to the right (delete first column)
+	
+	d = np.amin(distances, axis=0)
+
+	# the last row should be all zeroes
+	d[-1] = 0
+	return d
 
 
-def get_seam(seams_index):
+def get_seam(distances):
 	"""Return a list of column indices so that seam[row]=seam_column."""
-	height = len(seams_index)
-	seam_start_column = seams_index[0].index(min(seams_index[0], key=lambda x: x[2]))
+	height, width = distances.shape
+	if (distances.shape[0] == 1):
+		return [int(np.argmin(distances))]
+	
+	last_row = distances[-1]
+	second_last_row = distances[-2]
 
-	# min_col = 0
-	# for col in seams_index[0]:
-	# 	print(col)
-	# 	if col[2] < seams_index[0][min_col][2]:
-	# 		min_col = col[1]
-	# seam_start_column = min_col
+	# TODO: is it neccessary to disable the first and last element of the rolled arrays?
+	distances[-2] = np.amin([
+		second_last_row + np.roll(last_row,  0, axis=0),
+		second_last_row + np.roll(last_row, +1, axis=0),
+		second_last_row + np.roll(last_row, -1, axis=0),
+	], axis=0)
 
-	seam = [seam_start_column]
-	current = (0, seam_start_column)
-	while (current[0] != height-1):
-		current = seams_index[current[0]][current[1]]
-		seam.append(current[1])
+	try:
+		seam = get_seam(distances[:-1])
+	except RecursionError:
+		print("Recursion depth exceeded. Image height must not exceed max recursion depth.")
+		sys.exit(0)
+
+	last_index = seam[-1]
+	candidate_indices = [last_index, last_index-1, last_index+1]
+	
+	if -1 in candidate_indices:
+		candidate_indices.remove(-1)
+	if width in candidate_indices:
+		candidate_indices.remove(width)
+
+	candidate_values = [last_row[c] for c in candidate_indices]
+	best_candidate_idx = np.argmin(candidate_values)
+
+	next_index = candidate_indices[best_candidate_idx]
+	seam.append(int(next_index))
 	return seam
 
 
-def mark_seam(pixels, seam):
+def mark_seam(image, seam):
 	"""Colour all pixels in a seam, given an array as returned by get_seam."""
 	mark_colour = (255, 255, 255) if MODE == "RGB" else (255, 255, 255, 255)
+	pixels = image.load()
 	for row in range(len(seam)):
 		pixels[seam[row], row] = mark_colour
 
 
-def remove_seam(pixels, seam, width, height):
+def remove_seam(pixels, seam):
 	"""Creates a copy of a bitmap without the seam."""
-	shrunk = Image.new(MODE, (width-1, height))
-	shrunk_px = shrunk.load()
-	for row in range(height):
-		offset = 0
-		for col in range(width):
-			if seam[row] == col:
-				offset = 1
-				continue
-			shrunk_px[col-offset, row] = pixels[col, row]
-	return shrunk
+	height, old_width, _ = pixels.shape
+	new_width = old_width - 1
+	arr = np.zeros((height, new_width, 3))
 
+	for row in range(height):
+		arr[row] = np.concatenate((pixels[row][:seam[row]], pixels[row][seam[row]+1:]), axis=0)
+
+	return Image.fromarray(np.uint8(arr))
+
+
+def save_image(img, filename):
+	try:
+		img.save(filename)
+	except OSError:
+		time.sleep(0.1)
+		save_image(img, filename)
 
 if __name__ == "__main__":
 	MODE = "RGB"
@@ -88,18 +117,27 @@ if __name__ == "__main__":
 	image = Image.open(filename).convert("RGB")
 
 	iteration_count = 1000
-	for i in range(iteration_count):
-		print("Processing", (i+1), "/", iteration_count)
+	children = [] #  child processes for saving output images
+	with Pool(processes=50) as pool:
+		for i in range(iteration_count):
+			print("Processing", (i+1), "/", iteration_count)
 
-		pixels = image.load()
-		seam = get_seam(index_seams(pixels, *image.size))
+			arr = np.array(image)
+			seam = get_seam(get_distances(arr))
 
-		mark_seam(pixels, seam)
-		image.save("output/shrinkage/" + filename[:-4] + "_" + str(i).zfill(4) + "_seamed.png")
+			mark_seam(image, seam)
+			seam_filename = "output/optimized/" + filename[:-4] + "_" + str(i).zfill(4) + "_seamed.png"
+			pool.apply_async(save_image, (image, seam_filename))
 
-		shrunk = remove_seam(pixels, seam, *image.size)
-		shrunk.save("output/shrinkage/" + filename[:-4] + "_" + str(i).zfill(4) + "_shrunk.png")
+			shrunk = remove_seam(arr, seam)
 
-		image = shrunk
+			out_filename = "output/optimized/" + filename[:-4] + "_" + str(i).zfill(4) + "_shrunk.png"
+			pool.apply_async(save_image, (shrunk, out_filename))
+
+			image = shrunk
+
+		pool.close()
+		print(f"Saving ...")
+		pool.join()
 
 	print("Done :)")
