@@ -10,12 +10,12 @@ To see the carving animated, use the `make_gif.py` script.
 
 Comparison of three different energy functions after 793 iterations:
 
-Granular saliency
+Granular saliency  
 ![after](saliency_0793.png)  
 Spectral residual saliency + gradient magnitude  
-![after](saliency+gradient.png)
+![after](saliency+gradient.png)  
 Gradient magnitude  
-![after](gradient.png)
+![after](gradient.png)  
 
 [![Demo video](comparison.mp4)](comparison.mp4)
 
