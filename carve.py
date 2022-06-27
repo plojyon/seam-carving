@@ -1,11 +1,14 @@
-from asyncio import _unregister_task
-import cv2
 import sys
-import math
-import time
+import threading
+from multiprocessing import Pool
+
+import cv2
+import fire
 import numpy as np
-from PIL import Image, ImageCms
-from multiprocessing import Process, Pool
+from PIL import Image
+from skimage.filters.rank import entropy as skimage_entropy
+from skimage.morphology import disk as skimage_disk
+from tqdm import tqdm
 
 MAX_IMAGE_HEIGHT = 1500
 
@@ -13,14 +16,65 @@ MAX_IMAGE_HEIGHT = 1500
 sys.setrecursionlimit(MAX_IMAGE_HEIGHT)
 
 
-def get_energy(pixels):
-	"""Take an array of pixel data and return an array of energies."""
+def entropy_simple(pixels):
+	"""Calculate the entropy for a given image in grayscale."""
+	footprint = skimage_disk(3)
+	r = pixels[:,:,0]*0.2989
+	g = pixels[:,:,1]*0.5870
+	b = pixels[:,:,2]*0.1140
+	grayscale = np.array(r+g+b, dtype="uint8")
+	ent = skimage_entropy(grayscale, footprint)
+	scale = 255/np.max(ent)
+	return ent*scale
 
-	# energy of (x, y) = sqrt(dx + dy)
-	# dx = sum(((x+1, y)[c] - (x-1, y)[r])**2 for c in [r, g, b])
-	# dy = sum(((x, y+1)[c] - (x, y-1)[r])**2 for c in [r, g, b])
-	# in other terms
-	# dx = sum((left-right)**2 for c in [r, g, b])
+
+def entropy_3ch(pixels):
+	"""Calculate the entropy for a given image on 3 channels."""
+	footprint = skimage_disk(3)
+	r = pixels[:,:,0].astype('uint8')
+	g = pixels[:,:,1].astype('uint8')
+	b = pixels[:,:,2].astype('uint8')
+	with Pool(processes=3) as pool:
+		ret_r = pool.apply_async(skimage_entropy, (r, footprint))
+		ret_g = pool.apply_async(skimage_entropy, (g, footprint))
+		ret_b = pool.apply_async(skimage_entropy, (b, footprint))
+
+		entropy_r = ret_r.get()
+		entropy_g = ret_g.get()
+		entropy_b = ret_b.get()
+	ent = np.array(entropy_r + entropy_g + entropy_b)
+	scale = 255/np.max(ent)
+	return ent*scale
+
+
+def saliency_spectral(pixels):
+	"""Calculate the saliency map for a given image using OpenCV."""
+	saliency = cv2.saliency.StaticSaliencySpectralResidual_create()
+	(success, saliencyMap) = saliency.computeSaliency(pixels.astype('uint8'))
+	if not success:
+		raise ValueError("Cannot compute saliency.")
+	return saliencyMap*255
+
+
+def saliency_fine(pixels):
+	"""Calculate the saliency map for a given image using OpenCV."""
+	saliency = cv2.saliency.StaticSaliencyFineGrained_create()
+	(success, saliencyMap) = saliency.computeSaliency(pixels.astype('uint8'))
+	if not success:
+		raise ValueError("Cannot compute saliency.")
+	return saliencyMap*255
+
+
+def gradient_magnitude(pixels):
+	"""Calculate the gradient magnitude for each pixel in an image.
+	
+	energy of (x, y) = sqrt(dx + dy)
+	dx = sum(((x+1, y)[c] - (x-1, y)[r])**2 for c in [r, g, b])
+	dy = sum(((x, y+1)[c] - (x, y-1)[r])**2 for c in [r, g, b])
+	in other terms
+	dx = sum((left-right)**2 for c in [r, g, b])
+	dy = sum((up-down)**2 for c in [r, g, b])
+	"""
 
 	# shifted images
 	up    = np.roll(pixels, -1, axis=0)
@@ -38,6 +92,10 @@ def get_energy(pixels):
 	dy = np.sum((up-down)**2, axis=2)
 
 	return np.sqrt(dx + dy)
+
+
+def saliency_plus_gradient(pixels):
+	return saliency_spectral(pixels)/2 + gradient_magnitude(pixels)/2
 
 
 def get_seam(distances):
@@ -112,40 +170,87 @@ def save_image(img, filename):
 	img.save(filename)
 
 def carve(
-	in_filename="broadway_tower.jpg",
-	out_filename="output/optimized/broadway_tower",
-	iteration_count=800,
+	in_filename,
+	out_filename,
+	*_,
+	iteration_count=1000,
 	save_seamed=True,
 	save_shrunk=True,
+	save_energy=True,
+	energy_function=0
 	):
+
+	get_energy = energy_functions[energy_function]
 
 	image = Image.open(in_filename).convert("RGB")
 
-	with Pool(processes=50) as pool:
-		for i in range(iteration_count):
-			print(f"Processing {i+1}/{iteration_count}")
-			seam_filename = f"{out_filename}_{str(i).zfill(4)}_seamed.png"
-			shrunk_filename = f"{out_filename}_{str(i).zfill(4)}_shrunk.png"
+	threads = []
+	for i in tqdm(range(iteration_count)):
+		seam_filename = f"{out_filename}_{str(i).zfill(4)}_seamed.png"
+		shrunk_filename = f"{out_filename}_{str(i).zfill(4)}_shrunk.png"
+		energy_filename = f"{out_filename}_{str(i).zfill(4)}_energy.png"
 
-			img_arr = np.array(image, dtype=np.longlong)
-			seam = get_seam(get_energy(img_arr))
-			
-			# mark seam and save
-			if save_seamed:
-				pool.apply_async(save_seam, (image, seam, seam_filename))
-			
-			# remove seam and save
-			if save_shrunk:
-				shrunk = remove_seam(img_arr, seam)
-				pool.apply_async(save_image, (shrunk, shrunk_filename))
+		img_arr = np.array(image, dtype=np.longlong)
+		energy = get_energy(img_arr)
 
-			image = shrunk
+		# save the energy map
+		if save_energy:
+			energy_image = Image.fromarray(energy).convert("RGB")
+			x = threading.Thread(target=save_image, args=(energy_image, energy_filename))
+			x.start()
+			threads.append(x)
 
-		pool.close()
-		print("Saving ...")
-		pool.join()
+		seam = get_seam(energy)
+
+		# mark seam and save
+		if save_seamed:
+			x = threading.Thread(target=save_seam, args=(image, seam, seam_filename))
+			x.start()
+			threads.append(x)
+
+		shrunk = remove_seam(img_arr, seam)
+
+		# remove seam and save
+		if save_shrunk:
+			x = threading.Thread(target=save_image, args=(shrunk, shrunk_filename))
+			x.start()
+			threads.append(x)
+
+		image = shrunk
+	
+	# wait for everything to finish saving
+	for thread in threads:
+		thread.join()
+
+	save_image(image, f"{out_filename}_final.png")
 
 	print("Done :)")
 
+
+def energy_demo(in_filename, out_filename, energy_function):
+	carve(
+		in_filename=in_filename,
+		out_filename=out_filename,
+		iteration_count=1,
+		save_seamed=False,
+		save_shrunk=False,
+		save_energy=True,
+		energy_function=energy_function
+	)
+
+energy_functions = [gradient_magnitude, saliency_spectral, saliency_fine, saliency_plus_gradient, entropy_3ch, entropy_simple]
 if __name__ == "__main__":
-	carve()
+	if len({"help", "--help", "-h"}.intersection(sys.argv)) != 0:
+		print(f"Usage: {sys.argv[0]} [in_filename] [out_filename]")
+		print("  in_filename is a path to the input image")
+		print("  out_filename is a path to the output image, without the extension")
+		print()
+		print("Optional parameters:")
+		for name, value in carve.__kwdefaults__.items():
+			print(" --", name, "=", value, sep="")
+		print()
+		print(f"energy_function is the index of the energy function:")
+		for i,f in enumerate(energy_functions):
+			print("", i, f.__name__)
+	else:
+		fire.Fire(carve)
