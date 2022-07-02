@@ -10,11 +10,6 @@ from skimage.filters.rank import entropy as skimage_entropy
 from skimage.morphology import disk as skimage_disk
 from tqdm import tqdm
 
-MAX_IMAGE_HEIGHT = 1500
-
-# height of the image must not exceed the recursion limit
-sys.setrecursionlimit(MAX_IMAGE_HEIGHT)
-
 
 def entropy_simple(pixels):
     """Calculate the entropy for a given image in grayscale."""
@@ -168,6 +163,20 @@ def remove_seam(pixels, seam):
     return Image.fromarray(np.uint8(arr))
 
 
+def insert_seam(pixels, seam):
+    """Create a copy of an image with an extra seam."""
+    raise NotImplementedError("oops")
+    height, old_width, _ = pixels.shape
+    new_width = old_width + 1
+    arr = np.zeros((height, new_width, 3))
+
+    for row in range(height):
+        new_row = (pixels[row][: seam[row]], """TODO""", pixels[row][seam[row] + 1 :])
+        arr[row] = np.concatenate(new_row, axis=0)
+
+    return Image.fromarray(np.uint8(arr))
+
+
 def save_seam(image, seam, filename):
     mark_seam(image, seam)
     save_image(image, filename)
@@ -182,18 +191,23 @@ def carve(
     out_filename,
     *_,
     iteration_count=1000,
-    save_seamed=True,
     save_shrunk=True,
-    save_energy=True,
+    save_seamed=False,
+    save_energy=False,
     energy_function=0,
+    silent=False,
 ):
 
     get_energy = energy_functions[energy_function]
 
     image = Image.open(in_filename).convert("RGB")
 
+    # height of the image must not exceed the recursion limit
+    sys.setrecursionlimit(np.max([image.size[1], 1500]))
+
     threads = []
-    for i in tqdm(range(iteration_count)):
+    iterator = range(iteration_count) if silent else tqdm(range(iteration_count))
+    for i in iterator:
         seam_filename = f"{out_filename}_{str(i).zfill(4)}_seamed.png"
         shrunk_filename = f"{out_filename}_{str(i).zfill(4)}_shrunk.png"
         energy_filename = f"{out_filename}_{str(i).zfill(4)}_energy.png"
@@ -232,10 +246,50 @@ def carve(
 
     save_image(image, f"{out_filename}_final.png")
 
-    print("Done :)")
+    return image
 
 
-def energy_demo(in_filename, out_filename, energy_function):
+def amplify(
+    in_filename,
+    out_filename,
+    *_,
+    iteration_count=1000,
+    step=1,
+    save_intermediate=True,
+    energy_function=0,
+    silent=False,
+):
+    """Content amplification."""
+
+    r = range(0, iteration_count, step)
+    iterator = r if silent else tqdm(r)
+    for i in iterator:
+        img = carve(
+            in_filename=in_filename,
+            out_filename=out_filename,
+            iteration_count=step,
+            save_shrunk=False,
+            save_seamed=False,
+            save_energy=False,
+            energy_function=energy_function,
+            silent=True,
+        )
+        new_size = np.sum((img.size, (step, 0)), axis=0)
+        img = img.resize(new_size)
+        suffix = f"_{str(i).zfill(3)}.png" if save_intermediate else ".png"
+        img.save(out_filename + suffix)
+        in_filename = out_filename + suffix
+    # TODO: rm out_filename + "_final.png"
+    return img
+
+
+def insert(*_, energy_function=0):
+    """Seam insertion."""
+    raise NotImplementedError("oops")
+
+
+def energy_demo(in_filename, out_filename, *_, energy_function=0):
+    """Test an energy function on an image. Output only the energy function."""
     carve(
         in_filename=in_filename,
         out_filename=out_filename,
@@ -247,6 +301,27 @@ def energy_demo(in_filename, out_filename, energy_function):
     )
 
 
+def help():
+    print(f"Usage: {sys.argv[0]} [command] [in_filename] [out_filename]")
+    print("  command is one of: [carve, test, enlarge]")
+    print("  in_filename is a path to the input image")
+    print("  out_filename is a path to the output image, without the extension")
+    print()
+    print("Optional parameters:")
+    for cmd_name, cmd_function in commands.items():
+        print(f"* {cmd_name}")
+        if cmd_function.__kwdefaults__ is None:
+            print("   (no additional parameters)")
+        else:
+            for name, value in cmd_function.__kwdefaults__.items():
+                print("   --", name, "=", value, sep="")
+        print()
+    print()
+    print(f"energy_function is the index of the energy function:")
+    for i, f in enumerate(energy_functions):
+        print("", i, f.__name__)
+
+
 energy_functions = [
     gradient_magnitude,
     saliency_spectral,
@@ -256,18 +331,13 @@ energy_functions = [
     entropy_simple,
 ]
 
+commands = {
+    "carve": carve,
+    "test": energy_demo,
+    "amplify": amplify,
+    "insert": insert,
+    "help": help,
+}
+
 if __name__ == "__main__":
-    if len({"help", "--help", "-h"}.intersection(sys.argv)) != 0:
-        print(f"Usage: {sys.argv[0]} [in_filename] [out_filename]")
-        print("  in_filename is a path to the input image")
-        print("  out_filename is a path to the output image, without the extension")
-        print()
-        print("Optional parameters:")
-        for name, value in carve.__kwdefaults__.items():
-            print(" --", name, "=", value, sep="")
-        print()
-        print(f"energy_function is the index of the energy function:")
-        for i, f in enumerate(energy_functions):
-            print("", i, f.__name__)
-    else:
-        fire.Fire(carve)
+    fire.Fire(commands)
