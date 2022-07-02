@@ -23,7 +23,7 @@ def make_gif(frame_paths, output_path):
     )
 
 
-def make_video(frame_paths, output_path):
+def make_video(frame_paths, output_path, frame_repeat=1):
     size = Image.open(frame_paths[0]).size
 
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # (*'avc1')
@@ -34,14 +34,16 @@ def make_video(frame_paths, output_path):
         frame = Image.new("RGB", size)
         width_diff = size[0] - image.size[0]
         frame.paste(image, (width_diff // 2, 0))
-        video.write(cv2.cvtColor(np.array(frame), cv2.COLOR_RGB2BGR))
+        npframe = np.array(frame)
+        for i in range(frame_repeat):
+            video.write(cv2.cvtColor(npframe, cv2.COLOR_RGB2BGR))
     video.release()
 
 
-def video_from_dir(directory, output="./animated.mp4"):
+def video_from_dir(directory, output="./animated.mp4", frame_repeat=1):
     pics = os.listdir(directory)
     frames = sorted([os.path.join(directory, pic) for pic in pics])
-    make_video(frames, output)
+    make_video(frames, output, frame_repeat=frame_repeat)
 
 
 if __name__ == "__main__":
