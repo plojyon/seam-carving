@@ -283,6 +283,11 @@ def amplify(
     return img
 
 
+def deamplify():
+    """Content de-amplification."""
+    raise NotImplementedError("oops")
+
+
 def insert(*_, energy_function=0):
     """Seam insertion."""
     raise NotImplementedError("oops")
@@ -335,6 +340,7 @@ commands = {
     "carve": carve,
     "test": energy_demo,
     "amplify": amplify,
+    "deamplify": deamplify,
     "insert": insert,
     "help": help,
 }

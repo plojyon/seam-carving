@@ -3,21 +3,38 @@
 Content-aware image scaling as described by [[1]](https://doi.org/10.1145%2F1275808.1276390).
 
 Usage example: `python carve.py broadway_tower.jpg output/broadway_tower --iteration_count=300`  
-To see the carving animated, use the `make_gif.py` script.
 
+To see the carving animated, use the `make_gif.py` script.  
+Usage example: `python make_gif.py output/broadway_tower`
+
+Original image:  
 ![before](broadway_tower.jpg)
-![during](broadway_tower_seam.png)
 
-Comparison of three different energy functions after 793 iterations:
+Energy function (e.g. gradient magnitude):  
+![energy](broadway_tower_energy.png)
 
-Granular saliency  
-![after](saliency_0793.png)  
-Spectral residual saliency + gradient magnitude  
-![after](saliency+gradient.png)  
-Gradient magnitude  
-![after](gradient.png)  
+Lowest energy seam (e.g. using Dijkstra's algo):  
+![during](broadway_tower_seamed.png)
 
-[![Demo video](comparison.mp4)](comparison.mp4)
+Shrunk image (297 iterations):  
+![shrunk](broadway_tower_shrunk.png)
+
+## More examples
+
+width=3440px  
+![spring_lake](spring_lake.jpg)
+
+width=2440px  
+![spring_lake_small](spring_lake_small.png)
+
+width=3440px  
+![snowy_mountains_big](snowy_mountains.jpg)
+
+width=2440px  
+![snowy_mountains_small](snowy_mountains_small.png)
+
+width=1440px  
+![snowy_mountains_smaller](snowy_mountains_smaller.png)
 
 Supported energy functions:
 
